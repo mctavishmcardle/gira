@@ -7,10 +7,13 @@ name = "pypi"
 gitpython = "*"
 click = "*"
 python-slugify = "*"
+marko = "*"
+tabulate = "*"
 
 [dev-packages]
 black = "*"
 gira = {editable = true, path = "."}
+isort = "*"
 
 [requires]
 python_version = "3.9"
