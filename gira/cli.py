@@ -57,7 +57,7 @@ ticket_status_choice = click.Choice(
 
 
 def add_terminal_newline_to_description(
-    context: click.Context, parameter: click.Parameter, value: str
+    context: click.Context, parameter: click.Parameter, value: typing.Optional[str]
 ) -> str:
     """Add a newline to the end of a ticket description
 
@@ -65,6 +65,23 @@ def add_terminal_newline_to_description(
     """
     if value:
         return f"{value}\n"
+    else:
+        return value
+
+
+def relativize_group(
+    context: click.Context,
+    parameter: click.Parameter,
+    value: typing.Optional[pathlib.Path],
+) -> str:
+    """Ensure a group is relative to the ticket dir"""
+    if value:
+        try:
+            return value.relative_to(context.obj.tickets_dir)
+        # A value error indicates that the group isn't in the subpath of the
+        # ticket dir - treat it as relative already
+        except ValueError:
+            return value
     else:
         return value
 
@@ -101,6 +118,15 @@ def add_terminal_newline_to_description(
     help="The status to assign to the ticket.",
 )
 @click.option(
+    "-g",
+    "--group",
+    type=click.Path(file_okay=False, path_type=pathlib.Path),
+    default=None,
+    show_default=False,
+    callback=relativize_group,
+    help="The group in which to place the ticket",
+)
+@click.option(
     "-e/-E",
     "--edit/--no-edit",
     default=False,
@@ -122,32 +148,35 @@ def new(
     title: str,
     description: str,
     status: ticket.TicketStatus,
+    group: pathlib.Path,
     edit: bool,
     echo_path: bool,
 ):
     new_ticket = ticket.Ticket(
         number=number,
         to_slug=slug or title,
-        directory=ticket_store.tickets_dir,
+        group=group,
         status=status,
         title=title,
         description=description,
     )
 
+    full_ticket_path = ticket_store.tickets_dir / new_ticket.path
+
     # Create the ticket storage directory; noop if it already exists
-    ticket_store.tickets_dir.mkdir(parents=True, exist_ok=True)
+    full_ticket_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Error out if the file already exists
-    with new_ticket.path.open(mode="x") as new_ticket_file:
+    with full_ticket_path.open(mode="x") as new_ticket_file:
         new_ticket_file.write(new_ticket.document)
 
     # Optionally echo the path to the ticket
     if echo_path:
-        click.echo(new_ticket.path)
+        click.echo(full_ticket_path)
 
     # Optionally open the file
     if edit:
-        click.edit(filename=new_ticket.path)
+        click.edit(filename=full_ticket_path)
 
 
 @cli.command(name="list", help="List existing tickets.")
@@ -160,7 +189,8 @@ def list_tickets(ticket_store: ticket.TicketStore):
                     ticket.number,
                     ticket.status.name if ticket.status else ticket.status,
                     ticket.title,
-                    ticket.path.relative_to(ticket_store.tickets_dir),
+                    ticket.group,
+                    ticket.full_slug,
                 )
                 for ticket in ticket_store.all_tickets
             ),

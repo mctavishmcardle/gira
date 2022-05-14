@@ -49,8 +49,7 @@ class Ticket:
     """A ticket"""
 
     number: int
-    directory: pathlib.Path
-
+    group: pathlib.Path
     status: TicketStatus
     title: str
     description: str
@@ -69,27 +68,46 @@ class Ticket:
             )
 
     @property
-    def filename(self) -> pathlib.Path:
-        """The filename for this ticket"""
+    def full_slug(self) -> str:
+        """The 'full' slug, including the ticket number"""
         name = str(self.number)
         if self.slug:
             name += f"-{self.slug}"
 
-        return pathlib.Path(f"{name}{TICKET_FILE_SUFFIX}")
+        return name
+
+    @property
+    def filename(self) -> pathlib.Path:
+        """The filename for this ticket"""
+        return pathlib.Path(f"{self.full_slug}{TICKET_FILE_SUFFIX}")
 
     @property
     def path(self) -> pathlib.Path:
         """The path to the ticket file"""
-        return self.directory / self.filename
+        if self.group:
+            return self.group / self.filename
+        else:
+            return self.filename
 
     @classmethod
-    def from_path(cls, path: pathlib.Path) -> "Ticket":
-        """Create a ticket from a file"""
+    def from_path(cls, path: pathlib.Path, tickets_dir: pathlib.Path) -> "Ticket":
+        """Create a ticket from a file
+
+        Args:
+            path: The full path to the ticket
+            tickets_dir: The directory containing all the tickets
+        """
         match = re.match(TICKET_FILE_REGEX, path.name)
         if match:
+            # Slugs are optional in ticket filenames
             slug = match.group("slug")
             if not slug:
                 slug = None
+
+            # Groups are optional: ungrouped tickets are directly under the ticket dir
+            group = path.relative_to(tickets_dir).parent
+            if group == pathlib.Path("."):
+                group = None
 
             with open(path) as ticket_file:
                 status, title, description, sections = cls.parse_markdown_document(
@@ -100,7 +118,7 @@ class Ticket:
                 number=int(match.group("number")),
                 slug=slug,
                 to_slug=title,
-                directory=path.parent,
+                group=group,
                 status=status,
                 title=title,
                 description=description,
@@ -249,7 +267,7 @@ class TicketStore:
         """All tickets in the current repo"""
         for ticket_path in self.tickets_dir.glob(f"**/*{TICKET_FILE_SUFFIX}"):
             try:
-                yield Ticket.from_path(ticket_path)
+                yield Ticket.from_path(ticket_path, self.tickets_dir)
             except MalformedTicket:
                 # Ignore any bad ticket files
                 pass
