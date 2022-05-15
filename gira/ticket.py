@@ -3,6 +3,7 @@ import dataclasses
 import enum
 import functools
 import itertools
+import os
 import pathlib
 import re
 import typing
@@ -59,13 +60,24 @@ class Ticket:
     to_slug: dataclasses.InitVar[str] = None
 
     def __post_init__(self, to_slug: str):
-        if to_slug is not None and self.slug is None:
-            self.slug = slugify.slugify(
-                to_slug,
-                max_length=60,
-                word_boundary=True,
-                save_order=True,
-            )
+        if self.slug is None:
+            if to_slug is not None:
+                self.slug = slugify.slugify(
+                    to_slug,
+                    max_length=60,
+                    word_boundary=True,
+                    save_order=True,
+                )
+            else:
+                self.slug = ""
+
+    def is_in_group(self, group: pathlib.Path) -> bool:
+        """Is this ticket in a specific group?
+
+        Args:
+            group: The group to check
+        """
+        return self.group is not None and self.group.is_relative_to(group)
 
     @property
     def full_slug(self) -> str:
@@ -88,6 +100,16 @@ class Ticket:
             return self.group / self.filename
         else:
             return self.filename
+
+    def relative_path(self, tickets_dir: pathlib.Path) -> pathlib.Path:
+        """The path, from the current working directory, to the ticket
+
+        Args:
+            tickets_dir: The top-level ticket directory, in which this ticket
+                lives (though this ticket may be in a subdirectory, if it's in
+                a group)
+        """
+        return os.path.relpath(tickets_dir / self.path)
 
     @classmethod
     def from_path(cls, path: pathlib.Path, tickets_dir: pathlib.Path) -> "Ticket":
@@ -212,6 +234,11 @@ class Ticket:
         return status, title, description, sections
 
     @property
+    def display_title(self) -> str:
+        """The title that's displayed"""
+        return self.title or ""
+
+    @property
     def document(self) -> str:
         """The contents of the ticket file"""
         return "".join(
@@ -219,10 +246,86 @@ class Ticket:
             + ([f"# {self.title}\n"] if self.title else [])
             + ([self.description] if self.description else [])
             + list(
-                itertools.chain(
-                    ["# {section}\n", contents]
+                itertools.chain.from_iterable(
+                    [f"# {section}\n", contents]
                     for section, contents in self.sections.items()
                 )
+            )
+        )
+
+
+# The individual items in ticket search inclusion & exclusion lists
+V = typing.TypeVar("V")
+
+
+def matching_predicate(
+    condition: collections.abc.Callable[[V], bool],
+    include: list[V],
+    exclude: list[V],
+) -> bool:
+    """Distribute inclusion & exclusion conditions for ticket searching
+
+    Args;
+        condition: The condition check to apply to a test value
+        include: The values to include; the condition check must be truthy for
+            at least one (if there are any)
+        exclude: The values to exclude; the condition check must be falsy for all
+            of these
+    """
+    return (any(map(condition, include)) if include else True) and not any(
+        map(condition, exclude)
+    )
+
+
+@dataclasses.dataclass
+class SearchConditions:
+    """A container for searching collections of tickets"""
+
+    numbers: list[int]
+    exclude_numbers: list[int]
+    groups: list[pathlib.Path]
+    exclude_groups: list[pathlib.Path]
+    statuses: list[TicketStatus]
+    exclude_statuses: list[TicketStatus]
+    titles: list[re.Pattern]
+    exclude_titles: list[re.Pattern]
+    descriptions: list[re.Pattern]
+    exclude_descriptions: list[re.Pattern]
+    slugs: list[re.Pattern]
+    exclude_slugs: list[re.Pattern]
+
+    def ticket_matches(self, ticket: Ticket) -> bool:
+        """Does a ticket match the configured search criteira?"""
+        return (
+            matching_predicate(
+                lambda number: ticket.number == number,
+                self.numbers,
+                self.exclude_numbers,
+            )
+            and matching_predicate(
+                lambda group: ticket.is_in_group(group),
+                self.groups,
+                self.exclude_groups,
+            )
+            and matching_predicate(
+                lambda status: ticket.status is status,
+                self.statuses,
+                self.exclude_statuses,
+            )
+            and matching_predicate(
+                lambda regex: regex.search(ticket.display_title),
+                self.titles,
+                self.exclude_titles,
+            )
+            and matching_predicate(
+                lambda regex: regex.search(ticket.description),
+                self.descriptions,
+                self.exclude_descriptions,
+            )
+            and matching_predicate(
+                lambda regex: regex.search(ticket.slug),
+                self.slugs,
+                self.exclude_slugs,
             )
         )
 
@@ -238,6 +341,7 @@ class TicketStore:
         self._tickets_dir = tickets_dir
 
         self.repo = git.Repo(search_parent_directories=True)
+        self.search_conditions: SearchCondtions = None
 
     @functools.cached_property
     def git_dir(self) -> pathlib.Path:
@@ -265,9 +369,25 @@ class TicketStore:
     @property
     def _all_tickets(self) -> collections.abc.Iterator[Ticket]:
         """All tickets in the current repo"""
-        for ticket_path in self.tickets_dir.glob(f"**/*{TICKET_FILE_SUFFIX}"):
+        for ticket_path in self.tickets_dir.rglob(f"*{TICKET_FILE_SUFFIX}"):
             try:
                 yield Ticket.from_path(ticket_path, self.tickets_dir)
             except MalformedTicket:
                 # Ignore any bad ticket files
                 pass
+
+    def set_search_conditions(self, search_conditions: SearchConditions) -> None:
+        """Set the conditions for ticket filtering"""
+        self.search_conditions = search_conditions
+
+    @property
+    def _filtered_tickets(self) -> collections.abc.Iterator[Ticket]:
+        """Tickets matching the set filtering conditions"""
+        for ticket in self.all_tickets:
+            if self.search_conditions and self.search_conditions.ticket_matches(ticket):
+                yield ticket
+
+    @functools.cached_property
+    def filtered_tickets(self) -> list[Ticket]:
+        """Tickets matching the set filtering conditions, if any"""
+        return sorted(list(self._filtered_tickets), key=lambda ticket: ticket.number)

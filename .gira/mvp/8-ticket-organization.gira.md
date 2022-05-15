@@ -1,5 +1,7 @@
 DONE
 
+# Ticket organization
+
 allow directories in the ticket dir, corresponding to epics or projects or whatever
 * generically recursive
 * work out how to display them correctly

@@ -1,4 +1,6 @@
 TODO
 
-* filtering by field
-    * e.g. status
+# Advanced ticket listing
+
+* sorting by fields
+* options for which fields to display

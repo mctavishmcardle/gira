@@ -1,4 +1,5 @@
 TODO
-# Set up `pre-commit` integration
+
+# Set up pre-commit integration
 
 * black & isort
