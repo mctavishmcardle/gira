@@ -4,3 +4,4 @@ TODO
 
 * sorting by fields
 * options for which fields to display
+* show git status of ticket file
