@@ -1,5 +1,5 @@
 TODO
-# Normalize command
+# FEATURE: Normalize command
 Command to parse & rerender a ticket
 
 # options

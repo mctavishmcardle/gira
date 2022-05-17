@@ -1,6 +1,6 @@
 TODO
 
-# First class ticket groups
+# FEATURE: First class ticket groups
 
 Handle groups like ordinary tickets
 

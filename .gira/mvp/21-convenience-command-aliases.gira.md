@@ -1,5 +1,5 @@
 TODO
-# Convenience command aliases
+# FEATURE: Convenience command aliases
 
 Alias high-level commands to common lower ones, to invoke quicker
 

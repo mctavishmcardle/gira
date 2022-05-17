@@ -16,7 +16,7 @@ import slugify
 from gira import markdown
 
 TICKET_FILE_SUFFIX: str = ".gira.md"
-TICKET_FILE_REGEX: str = (
+TICKET_FILE_REGEX: str = re.compile(
     f"(?P<number>\d+)(-(?P<slug>(\w+)(-\w+)*))?{re.escape(TICKET_FILE_SUFFIX)}"
 )
 
@@ -68,7 +68,7 @@ class PathComponents:
             MalformedTicket:
                 If required information can't be extracted from the ticket path
         """
-        match = re.match(TICKET_FILE_REGEX, path.name)
+        match = TICKET_FILE_REGEX.match(path.name)
 
         if match:
             return cls(
@@ -130,6 +130,22 @@ class TicketRelationship(enum.Flag):
 RelationshipMap = dict[TicketRelationship, dict[int, str]]
 
 
+@enum.unique
+class TicketWorkType(enum.Enum):
+    """The types of work that a ticket can correspond to"""
+
+    # A ticket that implements a new feature
+    FEATURE = enum.auto()
+    # A ticket that corresponds to non-feature work
+    TASK = enum.auto()
+    # A ticket that fixes a bug
+    BUG = enum.auto()
+
+
+WORK_TYPE_UNION = "|".join(work_type.name for work_type in TicketWorkType)
+TICKET_HEADER_REGEX = re.compile(f"(?P<work_type>{WORK_TYPE_UNION}): (?P<title>.+)")
+
+
 @dataclasses.dataclass
 class Ticket:
     """A ticket"""
@@ -137,6 +153,7 @@ class Ticket:
     number: int
     group: pathlib.Path
     status: TicketStatus
+    work_type: TicketWorkType
     title: str
     description: str
 
@@ -245,6 +262,7 @@ class Ticket:
         document: marko.block.Document,
     ) -> tuple[
         typing.Optional[TicketStatus],
+        typing.Optional[TicketWorkType],
         typing.Optional[str],
         typing.Optional[str],
         dict[str, str],
@@ -254,9 +272,10 @@ class Ticket:
         Returns:
             A tuple containing:
                 1. The ticket status, if any
-                2. The ticket title, if any
-                3. The ticket description, if any
-                4. A map from section titles to section contents, if any
+                2. The ticket work type, if any
+                3. The ticket title, if any
+                4. The ticket description, if any
+                5. A map from section titles to section contents, if any
         """
 
         children = itertools.filterfalse(
@@ -285,6 +304,7 @@ class Ticket:
 
         status = None
         title = None
+        work_type = None
         description = []
         sections = {}
 
@@ -321,13 +341,44 @@ class Ticket:
                 else:
                     sections[heading_text] = contents
 
+        if title:
+            title, work_type = Ticket.extract_title_and_work_type(title)
+
         description = markdown.render_element_list(description)
         sections = {
             title: markdown.render_element_list(contents)
             for title, contents in sections.items()
         }
 
-        return status, title, description, sections
+        return status, work_type, title, description, sections
+
+    @staticmethod
+    def extract_title_and_work_type(
+        header: str,
+    ) -> tuple[typing.Optional[str], typing.Optional[TicketWorkType]]:
+        """Parse a ticket file header into a title & work type member, if possible
+
+        Returns:
+            A tuple containing:
+                1. The title, if any
+                2. The work type, if any
+        """
+        try:
+            return None, TicketWorkType[header]
+        # Indicates that the header isn't a bare work type (because it's not
+        # a member of the enum)
+        except KeyError:
+            pass
+
+        match = TICKET_HEADER_REGEX.match(header)
+        # If either field isn't matched, the match will be falsy
+        if match:
+            # Because the regex only allows names of the work type members for
+            # that match group, we can directly cast the match to a member
+            return match.group("title"), TicketWorkType[match.group("work_type")]
+
+        # Default to interpreting the header as a title without a work type
+        return header, None
 
     @property
     def display_title(self) -> str:
@@ -335,11 +386,37 @@ class Ticket:
         return self.title or ""
 
     @property
+    def title_and_type_header(self) -> str:
+        """The header displayed at the top of the document
+
+        The header contains the title and work type indicator, if either are set
+        """
+        work_type = ""
+        if self.work_type is not None:
+            work_type = self.work_type.name
+
+        # Only join with a colon and space if both exist
+        if work_type and self.display_title:
+            return f"{work_type}: {self.display_title}"
+        # Since `display_title` will be an empty string if there isn't a title,
+        # this will properly display a bare work type
+        elif work_type:
+            return work_type
+        # Finally, if there is no work type, just display the title, which can be
+        # an empty string if no title is set
+        else:
+            return self.display_title
+
+    @property
     def document(self) -> str:
         """The contents of the ticket file"""
         return "".join(
             ([f"{self.status.name}", "\n\n"] if self.status else [])
-            + ([f"# {self.title}", "\n"] if self.title else [])
+            + (
+                [f"# {self.title_and_type_header}", "\n"]
+                if self.title_and_type_header
+                else []
+            )
             + (["\n", f"{self.description}"] if self.description else [])
             # Format all sections
             + list(
@@ -416,6 +493,8 @@ class SearchConditions:
     exclude_groups: list[pathlib.Path]
     statuses: list[TicketStatus]
     exclude_statuses: list[TicketStatus]
+    work_types: list[TicketWorkType]
+    exclude_work_types: list[TicketWorkType]
     titles: list[re.Pattern]
     exclude_titles: list[re.Pattern]
     descriptions: list[re.Pattern]
@@ -492,6 +571,11 @@ class SearchConditions:
                 self.exclude_statuses,
             )
             and self.matching_predicate(
+                lambda work_type: ticket.work_type is work_type,
+                self.work_types,
+                self.exclude_work_types,
+            )
+            and self.matching_predicate(
                 lambda regex: regex.search(ticket.display_title),
                 self.titles,
                 self.exclude_titles,
@@ -548,9 +632,13 @@ class LazyTicketStore(dict):
         # Parse the ticket file contents
         with open(self.tickets_dir / path_components.path) as ticket_file:
             document = marko.parse(ticket_file.read())
-            status, title, description, sections = Ticket.parse_markdown_document(
-                document
-            )
+            (
+                status,
+                work_type,
+                title,
+                description,
+                sections,
+            ) = Ticket.parse_markdown_document(document)
             raw_relationships = Ticket.extract_document_relationships(document)
 
         # Only include relationships to tickets that actually exist
@@ -567,6 +655,7 @@ class LazyTicketStore(dict):
             slug=path_components.slug,
             group=path_components.group,
             status=status,
+            work_type=work_type,
             title=title,
             description=description,
             sections=sections,

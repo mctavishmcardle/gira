@@ -1,5 +1,5 @@
 TODO
-# 'Won't do' ticket status
+# FEATURE: 'Won't do' ticket status
 New status for tickets that won't get finished
 
 # questions

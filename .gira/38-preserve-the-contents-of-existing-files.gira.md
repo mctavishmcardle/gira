@@ -1,6 +1,6 @@
 TODO
 
-# Preserve the contents of existing files
+# FEATURE: Preserve the contents of existing files
 
 Can do this by adding the file contents as a property on the ticket (or have it save the full path & open it when needed? is that necessary? we already only open lazily) and populating status, title, etc from that when requested. Can look for `MISSING` on dataclass
 

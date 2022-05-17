@@ -1,6 +1,6 @@
 TODO
 
-# Silent mapped item overwrites
+# BUG: Silent mapped item overwrites
 
 currently:
 * a ticket with multiple relationships to the same ticket will only have the last

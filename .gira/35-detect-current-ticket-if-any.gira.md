@@ -1,6 +1,6 @@
 TODO
 
-# Detect 'current' ticket, if any?
+# FEATURE: Detect 'current' ticket, if any?
 
 Look for tickets that are currently being worked on (by status or by git branch number?) and let you quickly refer to it (e.g. during relationship setting or editing)
 

@@ -1,5 +1,5 @@
-TODO
-# Ticket types
+DONE
+# FEATURE: Ticket types
 feature, task, bug fix, etc
 
 # implementation

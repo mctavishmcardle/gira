@@ -1,6 +1,6 @@
 TODO
 
-# Better help text for enums
+# FEATURE: Better help text for enums
 
 Need to work out a way to show enum options for the params that take them in & also show explanatory info on enum elements in CLI help text
 

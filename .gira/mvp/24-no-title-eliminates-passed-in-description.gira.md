@@ -1,5 +1,5 @@
 TODO
-# No title eliminates passed-in description
+# BUG: No title eliminates passed-in description
 
 # example
 

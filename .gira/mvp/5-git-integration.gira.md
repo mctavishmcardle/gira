@@ -1,6 +1,6 @@
 TODO
 
-# Git integration
+# FEATURE: Git integration
 
 * creating new branches for tickets that are started
     * updating ticket status when starting it

@@ -204,6 +204,15 @@ def validate_ticket_relationship_creation(
     return ticket_number, relationship, label
 
 
+@plain_callback
+def parse_ticket_work_type(value: str) -> ticket.TicketWorkType:
+    """Parse the ticket work type choice into a proper enum member"""
+    return ticket.TicketWorkType[value]
+
+
+ticket_work_type_choice = choice_from_enum(ticket.TicketWorkType)
+
+
 @cli.command()
 @click.option("-t", "--title", help="A title to assign the ticket.")
 @click.option(
@@ -222,6 +231,15 @@ def validate_ticket_relationship_creation(
     show_default=True,
     callback=parse_ticket_status,
     help="The status to assign to the ticket.",
+)
+@click.option(
+    "-w",
+    "--work-type",
+    type=ticket_work_type_choice,
+    default=ticket.TicketWorkType.FEATURE.name,
+    show_default=True,
+    callback=parse_ticket_work_type,
+    help="The work_type to assign to the ticket.",
 )
 @click.option(
     "-g",
@@ -273,6 +291,7 @@ def new(
     title: str,
     description: str,
     status: ticket.TicketStatus,
+    work_type: ticket.TicketWorkType,
     group: pathlib.Path,
     slug: str,
     number: int,
@@ -290,6 +309,7 @@ def new(
         to_slug=slug or title,
         group=group,
         status=status,
+        work_type=work_type,
         title=title,
         description=description,
         relationships=relationship_map,
@@ -388,6 +408,22 @@ search_relationship = functools.partial(
         f"Pass `{ticket_exclude_status_remove_default}` to bypass the default exclusion."
     ),
 )
+@search_option(
+    "-w",
+    "--work-type",
+    "work_types",
+    type=ticket_work_type_choice,
+    callback=mapped_callback(parse_ticket_work_type),
+    help="Show tickets with one of these work types.",
+)
+@search_option(
+    "-W",
+    "--exclude-work-type",
+    "exclude_work_types",
+    type=ticket_work_type_choice,
+    callback=mapped_callback(parse_ticket_work_type),
+    help="Exclude tickets with one of these work types.",
+)
 @search_regex(
     "-t", "--title", "titles", help="Show tickets whose titles match this pattern."
 )
@@ -450,6 +486,8 @@ def search(
     exclude_groups: list[pathlib.Path],
     statuses: list[ticket.TicketStatus],
     exclude_statuses: list[ticket.TicketStatus],
+    work_types: list[ticket.TicketWorkType],
+    exclude_work_types: list[ticket.TicketWorkType],
     titles: list[re.Pattern],
     exclude_titles: list[re.Pattern],
     descriptions: list[re.Pattern],
@@ -475,6 +513,8 @@ def search(
             exclude_groups,
             statuses,
             exclude_statuses,
+            work_types,
+            exclude_work_types,
             titles,
             exclude_titles,
             descriptions,
@@ -501,6 +541,7 @@ def list_tickets(ticket_store: ticket.TicketStore):
             (
                 (
                     ticket.status.name if ticket.status else ticket.status,
+                    ticket.work_type.name if ticket.work_type else ticket.work_type,
                     ticket.number,
                     ticket.title,
                     ticket.group,

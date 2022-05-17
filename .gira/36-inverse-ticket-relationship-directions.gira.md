@@ -1,6 +1,6 @@
 TODO
 
-# Inverse ticket relationship directions
+# FEATURE: Inverse ticket relationship directions
 
 For directional relationship types, can probably set them up in pairs using the enum functional interface, and set up some sort of correspondence between the enums? Want to be able to search bidirectionally
 

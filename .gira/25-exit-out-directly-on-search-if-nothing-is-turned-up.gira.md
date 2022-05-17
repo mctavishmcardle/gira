@@ -1,5 +1,5 @@
 TODO
-# Exit out directly on search if nothing is turned up
+# BUG: Exit out directly on search if nothing is turned up
 
 # issues
 

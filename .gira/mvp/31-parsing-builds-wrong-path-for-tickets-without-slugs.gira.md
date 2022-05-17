@@ -1,5 +1,5 @@
 TODO
-# Parsing builds wrong path for tickets without slugs
+# BUG: Parsing builds wrong path for tickets without slugs
 Create a ticket with no title (so slug & filename prefix is just number); edit to add title. Subsequent lists will display wrong full slug & edit will open the wrong file.
 
 # fix
