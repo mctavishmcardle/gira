@@ -1,3 +1,8 @@
 TODO
+
 # Ticket group move
-search subcommand to move multiple tickets into a new group; see #13
+
+[doable as a result of]:13 (RELATES_TO)
+[features described in]:13 (REFERENCES)
+
+search subcommand to move multiple tickets into a new group

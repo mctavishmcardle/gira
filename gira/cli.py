@@ -1,5 +1,7 @@
 import collections
+import enum
 import functools
+import itertools
 import pathlib
 import re
 import typing
@@ -29,23 +31,26 @@ def cli(context: click.Context, tickets_dir: typing.Optional[pathlib.Path]):
 def validate_new_ticket_number(
     context: click.Context, parameter: click.Parameter, value: typing.Optional[int]
 ) -> int:
-    """Validate a user-input ticket number, for ticket creation"""
-    tickets_by_number = context.obj.tickets_by_number
+    """Validate a user-input ticket number, for ticket creation
+
+    Raises:
+        click.BadParameter: If a ticket with that number already exists
+    """
+    ticket_store = context.obj
 
     # If no ticket number is specified, assign the next available one
     if value is None:
-        # Default to -1 if there are no tickets, so the first ticket is #0
-        value = max(tickets_by_number.keys(), default=-1) + 1
-    # If the ticket number is already in use, error out
-    elif value in tickets_by_number.keys():
-        ticket = tickets_by_number[value]
+        return ticket_store.next_ticket_number
 
+    try:
+        ticket_path = ticket_store.ticket_path_components_by_number[value]
         raise click.BadParameter(
-            message=f"Ticket numbers must be unique; ticket #{value} already exists: {ticket}.",
-            ctx=context,
+            message=f"Ticket #{value} already exists: {ticket_path}.",
         )
-
-    return value
+    # A `KeyError` indicates that the ticket isn't in the ticket store, so it's
+    # OK to use
+    except KeyError:
+        return value
 
 
 # The input parameter value
@@ -68,15 +73,46 @@ def plain_callback(callback: collections.abc.Callable[[V], O]) -> GenericClickCa
     return functools.wraps(callback)(lambda context, parameter, value: callback(value))
 
 
+def choice_from_enum(
+    enum_type: typing.Type[enum.Enum], case_sensitive: bool = False
+) -> click.Choice:
+    """Constructs a `click` parameter choice from enum members
+
+    Args:
+        enum_type: The enum whose members to permit
+        case_sensitive: Should the choice by case-sensitive?
+        choice_type: If desired, the `Choice` subclass to use
+    """
+    return click.Choice(
+        [member.name for member in enum_type], case_sensitive=case_sensitive
+    )
+
+
 @plain_callback
 def parse_ticket_status(value: str) -> ticket.TicketStatus:
     """Parse the ticket status choice into a proper enum member"""
     return ticket.TicketStatus[value]
 
 
-ticket_status_choice = click.Choice(
-    [status.name for status in ticket.TicketStatus], case_sensitive=False
-)
+ticket_status_choice = choice_from_enum(ticket.TicketStatus)
+
+
+def mapped_callback(
+    callback: GenericClickCallback,
+    condition: collections.abc.Callable[[V], bool] = lambda value: True,
+) -> collections.abc.Callable[[click.Context, click.Parameter, list[V]], list[O]]:
+    """Maps a single-value `click` callback to multiple values
+
+    Args:
+        callback: The callback to wrap
+        condition: An optional test to apply to the input value list, to exclude
+            elements whose return-value is falsy
+    """
+    return functools.wraps(callback)(
+        lambda context, parameter, values: [
+            callback(context, parameter, value) for value in values if condition(value)
+        ]
+    )
 
 
 @plain_callback
@@ -108,6 +144,66 @@ def relativize_group(
         return value
 
 
+ticket_relationship_choice = choice_from_enum(ticket.TicketRelationship)
+
+
+ticket_relationship_match_any = "ANY"
+ticket_relationship_search_choice = click.Choice(
+    ticket_relationship_choice.choices + [ticket_relationship_match_any],
+    case_sensitive=False,
+)
+
+
+def validate_ticket_relationship(
+    context: click.Context, parameter: click.Parameter, value: tuple[int, str]
+) -> ticket.SpecificTicketRelationship:
+    """Validate a specifc ticket relationship.
+
+    This function:
+        * Ensures it points to an actual ticket
+        * Extracts the correct relationship enum member
+        * Handles matching "ANY" ticket relationship
+
+    Raises:
+        click.BadParameter: If the ticket doesn't exist
+    """
+    ticket_number, raw_relationship = value
+
+    if ticket_number not in context.obj.all_ticket_numbers:
+        raise click.BadParameter(message=f"Ticket #{ticket_number} does not exist.")
+
+    if raw_relationship == ticket_relationship_match_any:
+        # Negating the null flag is equivalent to ORing all of them
+        # i.e. it corresponds to "ANY"
+        relationship = ~ticket.TicketRelationship(0)
+    else:
+        relationship = ticket.TicketRelationship[raw_relationship]
+
+    return ticket_number, relationship
+
+
+@mapped_callback
+def validate_ticket_relationship_creation(
+    context: click.Context,
+    parameter: click.Parameter,
+    value: tuple[int, str, str],
+) -> tuple[int, ticket.TicketRelationship, str]:
+    """Ensure a ticket relationship points to an actual ticket
+
+    Also extract the proper relationship enum member
+
+    Raises:
+        click.BadParameter: If the ticket doesn't exist
+    """
+    ticket_number, relationship, label = value
+
+    ticket_number, relationship = validate_ticket_relationship(
+        context, parameter, (ticket_number, relationship)
+    )
+
+    return ticket_number, relationship, label
+
+
 @cli.command()
 @click.option("-t", "--title", help="A title to assign the ticket.")
 @click.option(
@@ -116,7 +212,7 @@ def relativize_group(
     prompt=True,
     prompt_required=False,
     callback=add_terminal_newline_to_description,
-    help="A description to provide to the ticket",
+    help="A description to provide to the ticket.",
 )
 @click.option(
     "-s",
@@ -134,12 +230,12 @@ def relativize_group(
     default=None,
     show_default=False,
     callback=relativize_group,
-    help="The group in which to place the ticket",
+    help="The group in which to place the ticket.",
 )
 @click.option(
     "-l",
     "--slug",
-    help="A slugifiable string to label the ticket file with. If a title is specified but a slug is not, the slug will be generated from by title",
+    help="A slugifiable string to label the ticket file with. If a title is specified but a slug is not, the slug will be generated from by title.",
 )
 @click.option(
     "-n",
@@ -147,6 +243,15 @@ def relativize_group(
     type=int,
     callback=validate_new_ticket_number,
     help="A ticket number to assign. If not specified, one will be chosen automatically.",
+)
+@click.option(
+    "-r",
+    "--relationship",
+    "relationships",
+    multiple=True,
+    type=(int, ticket_relationship_choice, str),
+    callback=validate_ticket_relationship_creation,
+    help="A relationship to give the ticket.",
 )
 @click.option(
     "-e/-E",
@@ -171,10 +276,15 @@ def new(
     group: pathlib.Path,
     slug: str,
     number: int,
+    relationships: list[tuple[int, ticket.TicketRelationship, str]],
     edit: bool,
     echo_path: bool,
 ):
     """Create a new ticket."""
+    relationship_map = collections.defaultdict(dict)
+    for target_ticket_number, relationship, label in relationships:
+        relationship_map[relationship][target_ticket_number] = label
+
     new_ticket = ticket.Ticket(
         number=number,
         to_slug=slug or title,
@@ -182,6 +292,7 @@ def new(
         status=status,
         title=title,
         description=description,
+        relationships=relationship_map,
     )
 
     full_ticket_path = ticket_store.tickets_dir / new_ticket.path
@@ -202,29 +313,12 @@ def new(
         click.edit(filename=full_ticket_path)
 
 
-def mapped_callback(
-    callback: GenericClickCallback,
-    condition: collections.abc.Callable[[V], bool] = lambda value: True,
-) -> collections.abc.Callable[[click.Context, click.Parameter, list[V]], list[O]]:
-    """Maps a single-value `click` callback to multiple values
-
-    Args:
-        callback: The callback to wrap
-        condition: An optional test to apply to the input value list, to exclude
-            elements whose return-value is falsy
-    """
-    return functools.wraps(callback)(
-        lambda context, parameter, values: [
-            callback(context, parameter, value) for value in values if condition(value)
-        ]
-    )
-
-
 ticket_exclude_status_remove_default = "!"
 ticket_exclude_status_choice = click.Choice(
     ticket_status_choice.choices + [ticket_exclude_status_remove_default],
     case_sensitive=False,
 )
+
 
 # Partials to reduce redundancy in setting up the search options
 search_option = functools.partial(click.option, multiple=True)
@@ -237,6 +331,12 @@ search_group = functools.partial(
 search_regex = functools.partial(
     search_option,
     callback=mapped_callback(plain_callback(re.compile)),
+)
+
+search_relationship = functools.partial(
+    search_option,
+    type=(int, ticket_relationship_search_choice),
+    callback=mapped_callback(validate_ticket_relationship),
 )
 
 
@@ -284,7 +384,7 @@ search_regex = functools.partial(
         parse_ticket_status, lambda value: value != ticket_exclude_status_remove_default
     ),
     help=(
-        "Filter out tickets with one of these statuses. "
+        "Exclude tickets with one of these statuses. "
         f"Pass `{ticket_exclude_status_remove_default}` to bypass the default exclusion."
     ),
 )
@@ -321,6 +421,24 @@ search_regex = functools.partial(
     "exclude_slugs",
     help="Exclude tickets whose slugs match this pattern.",
 )
+@search_relationship(
+    "-r",
+    "--relationship",
+    "relationships",
+    help=(
+        "Show tickets with this relationship to another ticket. "
+        f"Pass `{ticket_relationship_match_any}` to match any relationship type."
+    ),
+)
+@search_relationship(
+    "-R",
+    "--exclude-relationship",
+    "exclude_relationships",
+    help=(
+        "Exclude tickets with this relationship to another ticket. "
+        f"Pass `{ticket_relationship_match_any}` to match any relationship type."
+    ),
+)
 @click.pass_obj
 @click.pass_context
 def search(
@@ -338,6 +456,8 @@ def search(
     exclude_descriptions: list[re.Pattern],
     slugs: list[re.Pattern],
     exclude_slugs: list[re.Pattern],
+    relationships: list[ticket.SpecificTicketRelationship],
+    exclude_relationships: list[ticket.SpecificTicketRelationship],
 ):
     """Search for tickets.
 
@@ -361,6 +481,8 @@ def search(
             exclude_descriptions,
             slugs,
             exclude_slugs,
+            relationships,
+            exclude_relationships,
         )
     )
 
@@ -378,11 +500,12 @@ def list_tickets(ticket_store: ticket.TicketStore):
         tabulate.tabulate(
             (
                 (
-                    ticket.number,
                     ticket.status.name if ticket.status else ticket.status,
+                    ticket.number,
                     ticket.title,
                     ticket.group,
-                    ticket.full_slug,
+                    # `None` results in a blank for empty related ticket lists
+                    ticket.related_ticket_numbers or None,
                 )
                 for ticket in ticket_store.filtered_tickets
             ),
@@ -432,7 +555,7 @@ def handle_multiple_found_tickets(
     `value` should be a bool indicating whether more than one ticket is acceptable
     """
     if value and len(context.obj.filtered_tickets) > 1:
-        raise click.BadParameter("Multiple tickets matched the search criteria")
+        raise click.BadParameter("Multiple tickets matched the search criteria.")
 
     return value
 
