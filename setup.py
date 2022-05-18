@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 setup(
     name="gira",
@@ -7,6 +7,6 @@ setup(
     install_requires=["Click", "gitpython", "python-slugify"],
     entry_points="""
         [console_scripts]
-        gira=gira.cli:cli
+        gira=cli:cli
     """,
 )

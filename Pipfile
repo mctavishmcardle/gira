@@ -14,6 +14,8 @@ tabulate = "*"
 black = "*"
 gira = {editable = true, path = "."}
 isort = "*"
+mypy = "*"
+types-tabulate = "*"
 
 [requires]
 python_version = "3.9"
