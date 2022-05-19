@@ -1,6 +1,8 @@
-from cli.search.commands import edit, list_tickets, show
-from cli.search.search import search
+from cli.search.commands import add, edit, list_tickets, set_properties, show
+from cli.search.search import search_tickets
 
-search.add_command(list_tickets)
-search.add_command(show)
-search.add_command(edit)
+search_tickets.add_command(list_tickets)
+search_tickets.add_command(show)
+search_tickets.add_command(edit)
+search_tickets.add_command(set_properties)
+search_tickets.add_command(add)

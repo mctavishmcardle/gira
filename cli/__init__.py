@@ -3,8 +3,8 @@ import typing
 
 import click
 
-from cli.new import new
-from cli.search import search
+from cli.new import new_ticket
+from cli.search import search_tickets
 from gira import ticket_store
 
 
@@ -23,5 +23,5 @@ def cli(context: click.Context, tickets_dir: typing.Optional[pathlib.Path]):
     context.obj = ticket_store.TicketStore(tickets_dir)
 
 
-cli.add_command(new)
-cli.add_command(search)
+cli.add_command(new_ticket)
+cli.add_command(search_tickets)

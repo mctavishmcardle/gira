@@ -1,6 +1,7 @@
-STARTED
+DONE
 
 # FEATURE: Ticket editing
+
 modify the contents of existing tickets
 
 # notes

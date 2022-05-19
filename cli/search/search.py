@@ -39,7 +39,7 @@ search_relationship = functools.partial(
 )
 
 
-@click.group(invoke_without_command=True)
+@click.group(name="search", invoke_without_command=True)
 @search_number(
     "-n",
     "--number",
@@ -156,7 +156,7 @@ search_relationship = functools.partial(
 )
 @click.pass_obj
 @click.pass_context
-def search(
+def search_tickets(
     context: click.Context,
     store: ticket_store.TicketStore,
     numbers: list[int],
@@ -208,4 +208,4 @@ def search(
     # Default to echoing relative paths
     if context.invoked_subcommand is None:
         for found_ticket in store.filtered_tickets:
-            click.echo(found_ticket.relative_path(store.tickets_dir))
+            click.echo(store.relative_ticket_path(found_ticket))

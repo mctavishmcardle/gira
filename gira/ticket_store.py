@@ -1,6 +1,7 @@
 import collections
 import dataclasses
 import functools
+import os
 import pathlib
 import re
 import typing
@@ -313,3 +314,7 @@ class TicketStore:
     def filtered_tickets(self) -> list[ticket.Ticket]:
         """Tickets matching the set filtering conditions, if any"""
         return sorted(list(self._filtered_tickets), key=lambda ticket: ticket.number)
+
+    def relative_ticket_path(self, existing_ticket: ticket.Ticket) -> pathlib.Path:
+        """The path, from the current working directory, to the ticket file"""
+        return pathlib.Path(os.path.relpath(self.tickets_dir / existing_ticket.path))

@@ -1,11 +1,27 @@
+import collections
 import enum
 import pathlib
 import typing
 
 import click
 
-from cli.callbacks import plain_callback
-from gira import ticket_properties, ticket_store
+from cli.callbacks import (
+    compose_callbacks,
+    mapped_callback,
+    none_passthrough,
+    plain_callback,
+)
+from gira import ticket, ticket_properties, ticket_store
+
+
+@plain_callback
+@none_passthrough
+def add_terminal_newline_to_description(value: str) -> str:
+    """Add a newline to the end of a ticket description
+
+    Required because one isn't added by default for prompted values
+    """
+    return f"{value}\n"
 
 
 def relativize_group(
@@ -44,6 +60,7 @@ ticket_work_type_choice = choice_from_enum(ticket_properties.TicketWorkType)
 
 
 @plain_callback
+@none_passthrough
 def parse_ticket_work_type(value: str) -> ticket_properties.TicketWorkType:
     """Parse the ticket work type choice into a proper enum member"""
     return ticket_properties.TicketWorkType[value]
@@ -58,6 +75,7 @@ ticket_exclude_status_choice = click.Choice(
 
 
 @plain_callback
+@none_passthrough
 def parse_ticket_status(value: str) -> ticket_properties.TicketStatus:
     """Parse the ticket status choice into a proper enum member"""
     return ticket_properties.TicketStatus[value]
@@ -97,3 +115,45 @@ def validate_ticket_relationship(
         relationship = ticket_properties.TicketRelationship[raw_relationship]
 
     return ticket_number, relationship
+
+
+TicketRelationshipTuple = tuple[int, ticket_properties.TicketRelationship, str]
+
+
+@mapped_callback
+def validate_raw_ticket_relationships(
+    context: click.Context,
+    parameter: click.Parameter,
+    value: tuple[int, str, str],
+) -> TicketRelationshipTuple:
+    """Ensure a ticket relationship points to an actual ticket
+
+    Also extract the proper relationship enum member
+
+    Raises:
+        click.BadParameter: If the ticket doesn't exist
+    """
+    raw_ticket_number, raw_relationship, label = value
+
+    ticket_number, relationship = validate_ticket_relationship(
+        context, parameter, (raw_ticket_number, raw_relationship)
+    )
+
+    return ticket_number, relationship, label
+
+
+@plain_callback
+def build_ticket_relationship_map(
+    relationships: list[TicketRelationshipTuple],
+) -> ticket.RelationshipMap:
+    """Construct a ticket relationship map"""
+    relationship_map: ticket.RelationshipMap = collections.defaultdict(dict)
+    for target_ticket_number, relationship, label in relationships:
+        relationship_map[relationship][target_ticket_number] = label
+
+    return relationship_map
+
+
+validate_ticket_relationship_creation = compose_callbacks(
+    [build_ticket_relationship_map, validate_raw_ticket_relationships]
+)

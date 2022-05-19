@@ -2,7 +2,6 @@ import collections
 import dataclasses
 import functools
 import itertools
-import os
 import pathlib
 import re
 import typing
@@ -32,10 +31,12 @@ class Ticket:
     description: typing.Optional[str]
 
     sections: dict[str, str] = dataclasses.field(default_factory=dict)
-    relationships: RelationshipMap = dataclasses.field(default_factory=dict)
+    relationships: RelationshipMap = dataclasses.field(
+        default_factory=lambda: collections.defaultdict(dict)
+    )
 
     slug: typing.Optional[str] = None
-    to_slug: dataclasses.InitVar[str] = None
+    to_slug: dataclasses.InitVar[typing.Optional[str]] = None
 
     def __post_init__(self, to_slug: str):
         if self.slug is None:
@@ -78,16 +79,6 @@ class Ticket:
             return self.group / self.filename
         else:
             return self.filename
-
-    def relative_path(self, tickets_dir: pathlib.Path) -> pathlib.Path:
-        """The path, from the current working directory, to the ticket
-
-        Args:
-            tickets_dir: The top-level ticket directory, in which this ticket
-                lives (though this ticket may be in a subdirectory, if it's in
-                a group)
-        """
-        return pathlib.Path(os.path.relpath(tickets_dir / self.path))
 
     @staticmethod
     def extract_document_relationships(
