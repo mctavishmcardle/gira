@@ -5,7 +5,7 @@ import typing
 import click
 
 from cli.callbacks import plain_callback
-from gira import ticket
+from gira import ticket_properties, ticket_store
 
 
 def relativize_group(
@@ -40,16 +40,16 @@ def choice_from_enum(
     )
 
 
-ticket_work_type_choice = choice_from_enum(ticket.TicketWorkType)
+ticket_work_type_choice = choice_from_enum(ticket_properties.TicketWorkType)
 
 
 @plain_callback
-def parse_ticket_work_type(value: str) -> ticket.TicketWorkType:
+def parse_ticket_work_type(value: str) -> ticket_properties.TicketWorkType:
     """Parse the ticket work type choice into a proper enum member"""
-    return ticket.TicketWorkType[value]
+    return ticket_properties.TicketWorkType[value]
 
 
-ticket_status_choice = choice_from_enum(ticket.TicketStatus)
+ticket_status_choice = choice_from_enum(ticket_properties.TicketStatus)
 ticket_exclude_status_remove_default = "!"
 ticket_exclude_status_choice = click.Choice(
     list(ticket_status_choice.choices) + [ticket_exclude_status_remove_default],
@@ -58,12 +58,12 @@ ticket_exclude_status_choice = click.Choice(
 
 
 @plain_callback
-def parse_ticket_status(value: str) -> ticket.TicketStatus:
+def parse_ticket_status(value: str) -> ticket_properties.TicketStatus:
     """Parse the ticket status choice into a proper enum member"""
-    return ticket.TicketStatus[value]
+    return ticket_properties.TicketStatus[value]
 
 
-ticket_relationship_choice = choice_from_enum(ticket.TicketRelationship)
+ticket_relationship_choice = choice_from_enum(ticket_properties.TicketRelationship)
 ticket_relationship_match_any = "ANY"
 ticket_relationship_search_choice = click.Choice(
     list(ticket_relationship_choice.choices) + [ticket_relationship_match_any],
@@ -73,7 +73,7 @@ ticket_relationship_search_choice = click.Choice(
 
 def validate_ticket_relationship(
     context: click.Context, parameter: click.Parameter, value: tuple[int, str]
-) -> ticket.SpecificTicketRelationship:
+) -> ticket_store.SpecificTicketRelationship:
     """Validate a specifc ticket relationship.
 
     This function:
@@ -92,8 +92,8 @@ def validate_ticket_relationship(
     if raw_relationship == ticket_relationship_match_any:
         # Negating the null flag is equivalent to ORing all of them
         # i.e. it corresponds to "ANY"
-        relationship = ~ticket.TicketRelationship(0)
+        relationship = ~ticket_properties.TicketRelationship(0)
     else:
-        relationship = ticket.TicketRelationship[raw_relationship]
+        relationship = ticket_properties.TicketRelationship[raw_relationship]
 
     return ticket_number, relationship

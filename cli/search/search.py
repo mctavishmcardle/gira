@@ -17,7 +17,7 @@ from cli.validation import (
     ticket_work_type_choice,
     validate_ticket_relationship,
 )
-from gira import ticket
+from gira import ticket_properties, ticket_store
 
 # Partials to reduce redundancy in setting up the search options
 search_option = functools.partial(click.option, multiple=True)
@@ -77,7 +77,7 @@ search_relationship = functools.partial(
     "--exclude-status",
     "exclude_statuses",
     type=ticket_exclude_status_choice,
-    default=[ticket.TicketStatus.DONE.name],
+    default=[ticket_properties.TicketStatus.DONE.name],
     show_default=True,
     callback=mapped_callback(
         parse_ticket_status, lambda value: value != ticket_exclude_status_remove_default
@@ -158,23 +158,23 @@ search_relationship = functools.partial(
 @click.pass_context
 def search(
     context: click.Context,
-    ticket_store: ticket.TicketStore,
+    store: ticket_store.TicketStore,
     numbers: list[int],
     exclude_numbers: list[int],
     groups: list[pathlib.Path],
     exclude_groups: list[pathlib.Path],
-    statuses: list[ticket.TicketStatus],
-    exclude_statuses: list[ticket.TicketStatus],
-    work_types: list[ticket.TicketWorkType],
-    exclude_work_types: list[ticket.TicketWorkType],
+    statuses: list[ticket_properties.TicketStatus],
+    exclude_statuses: list[ticket_properties.TicketStatus],
+    work_types: list[ticket_properties.TicketWorkType],
+    exclude_work_types: list[ticket_properties.TicketWorkType],
     titles: list[re.Pattern],
     exclude_titles: list[re.Pattern],
     descriptions: list[re.Pattern],
     exclude_descriptions: list[re.Pattern],
     slugs: list[re.Pattern],
     exclude_slugs: list[re.Pattern],
-    relationships: list[ticket.SpecificTicketRelationship],
-    exclude_relationships: list[ticket.SpecificTicketRelationship],
+    relationships: list[ticket_store.SpecificTicketRelationship],
+    exclude_relationships: list[ticket_store.SpecificTicketRelationship],
 ):
     """Search for tickets.
 
@@ -184,8 +184,8 @@ def search(
     If no subcommand is invoked, this will output the relative paths to all the
     matched tickets.
     """
-    ticket_store.set_search_conditions(
-        ticket.SearchConditions(
+    store.set_search_conditions(
+        ticket_store.SearchConditions(
             numbers,
             exclude_numbers,
             groups,
@@ -207,5 +207,5 @@ def search(
 
     # Default to echoing relative paths
     if context.invoked_subcommand is None:
-        for found_ticket in ticket_store.filtered_tickets:
-            click.echo(found_ticket.relative_path(ticket_store.tickets_dir))
+        for found_ticket in store.filtered_tickets:
+            click.echo(found_ticket.relative_path(store.tickets_dir))

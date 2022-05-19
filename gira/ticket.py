@@ -1,149 +1,23 @@
 import collections
 import dataclasses
-import enum
 import functools
 import itertools
-import operator
 import os
 import pathlib
 import re
 import typing
 
-import git
 import marko
 import slugify
 
-from gira import markdown
+from gira import markdown, ticket_properties
 
-TICKET_FILE_SUFFIX: str = ".gira.md"
-TICKET_FILE_REGEX: str = re.compile(
-    f"(?P<number>\d+)(-(?P<slug>(\w+)(-\w+)*))?{re.escape(TICKET_FILE_SUFFIX)}"
+WORK_TYPE_UNION = "|".join(
+    work_type.name for work_type in ticket_properties.TicketWorkType
 )
-
-
-class MalformedTicket(Exception):
-    """Raised when a ticket file can't be interpreted as a valid ticket"""
-
-    def __init__(self, path: pathlib.Path):
-        """
-        Args:
-            ticket: The path to the ticket that couldn't be parsed
-        """
-        self.path = path
-
-
-@dataclasses.dataclass
-class PathComponents:
-    """A container for all the information about a ticket contained in its path"""
-
-    # Should be relative to the ticket root dir
-    path: pathlib.Path
-    number: int
-    slug: typing.Optional[str]
-
-    @property
-    def group(self) -> typing.Optional[pathlib.Path]:
-        """The group that the ticket is in"""
-        group = self.path.parent
-
-        if group == pathlib.Path("."):
-            group = None
-        else:
-            return group
-
-    @property
-    def filename(self) -> str:
-        """The filename of the ticket"""
-        return self.path.name
-
-    @classmethod
-    def from_path(cls, path: pathlib.Path) -> "PathComponents":
-        """Extract the components from a path
-
-        Args:
-            path: The path to get ticket component information from; should be
-                relative to the root ticket dir
-
-        Raises:
-            MalformedTicket:
-                If required information can't be extracted from the ticket path
-        """
-        match = TICKET_FILE_REGEX.match(path.name)
-
-        if match:
-            return cls(
-                path,
-                int(match.group("number")),
-                # Slugs are optional in ticket filenames: `slug` will be `None`
-                # if that group is missing from the match
-                match.group("slug"),
-            )
-        else:
-            raise MalformedTicket(path)
-
-
-@enum.unique
-class TicketStatus(enum.Enum):
-    """The statuses that a ticket can have"""
-
-    # A ticket that has yet to be started
-    TODO = enum.auto()
-    # A ticket that is currently being worked on
-    STARTED = enum.auto()
-    # A ticket on which work has been paused
-    STOPPED = enum.auto()
-    # A ticket which has been finished
-    DONE = enum.auto()
-
-
-@enum.unique
-class TicketRelationship(enum.Flag):
-    """The relationships a ticket have with another ticket
-
-    Note:
-        These are directional: The ticket with the relationship 'verbs' the
-        ticket that is the target of the relationship
-
-    Note:
-        Because a ticket can have multiple relationships, of different types,
-        to another ticket, this enum is a `Flag` to allow easy comparisons.
-    """
-
-    # One ticket refers to another one
-    REFERENCES = enum.auto()
-    # One ticket relates to another one
-    RELATES_TO = enum.auto()
-
-    # One ticket prevents another from being worked on
-    BLOCKS = enum.auto()
-    BLOCKED_BY = enum.auto()
-    # One ticket results in another being required
-    CAUSES = enum.auto()
-    CAUSED_BY = enum.auto()
-    # One ticket makes another's work unecessary
-    FIXES = enum.auto()
-    FIXED_BY = enum.auto()
-
-
-# A map from relationship types to: maps of tickets that have those relationships
-# to the label for that relationship
-RelationshipMap = dict[TicketRelationship, dict[int, str]]
-
-
-@enum.unique
-class TicketWorkType(enum.Enum):
-    """The types of work that a ticket can correspond to"""
-
-    # A ticket that implements a new feature
-    FEATURE = enum.auto()
-    # A ticket that corresponds to non-feature work
-    TASK = enum.auto()
-    # A ticket that fixes a bug
-    BUG = enum.auto()
-
-
-WORK_TYPE_UNION = "|".join(work_type.name for work_type in TicketWorkType)
 TICKET_HEADER_REGEX = re.compile(f"(?P<work_type>{WORK_TYPE_UNION}): (?P<title>.+)")
+
+RelationshipMap = dict[ticket_properties.TicketRelationship, dict[int, str]]
 
 
 @dataclasses.dataclass
@@ -151,16 +25,16 @@ class Ticket:
     """A ticket"""
 
     number: int
-    group: pathlib.Path
-    status: TicketStatus
-    work_type: TicketWorkType
-    title: str
-    description: str
+    group: typing.Optional[pathlib.Path]
+    status: typing.Optional[ticket_properties.TicketStatus]
+    work_type: typing.Optional[ticket_properties.TicketWorkType]
+    title: typing.Optional[str]
+    description: typing.Optional[str]
 
     sections: dict[str, str] = dataclasses.field(default_factory=dict)
     relationships: RelationshipMap = dataclasses.field(default_factory=dict)
 
-    slug: str = None
+    slug: typing.Optional[str] = None
     to_slug: dataclasses.InitVar[str] = None
 
     def __post_init__(self, to_slug: str):
@@ -195,7 +69,7 @@ class Ticket:
     @property
     def filename(self) -> pathlib.Path:
         """The filename for this ticket"""
-        return pathlib.Path(f"{self.full_slug}{TICKET_FILE_SUFFIX}")
+        return pathlib.Path(f"{self.full_slug}{ticket_properties.TICKET_FILE_SUFFIX}")
 
     @property
     def path(self) -> pathlib.Path:
@@ -213,7 +87,7 @@ class Ticket:
                 lives (though this ticket may be in a subdirectory, if it's in
                 a group)
         """
-        return os.path.relpath(tickets_dir / self.path)
+        return pathlib.Path(os.path.relpath(tickets_dir / self.path))
 
     @staticmethod
     def extract_document_relationships(
@@ -230,20 +104,22 @@ class Ticket:
                 1. The number of a target ticket
                 2. The label for the relationship to that target
         """
-        relationships = collections.defaultdict(dict)
+        relationships: RelationshipMap = collections.defaultdict(dict)
 
         # Only get relationships from link reference definitions, for now
-        for label, (destination, title) in document.link_ref_defs.items():
-            destination, title = markdown.parse_link_components(destination, title)
+        for label, (raw_destination, raw_title) in document.link_ref_defs.items():
+            destination, title = markdown.parse_link_components(
+                raw_destination, raw_title
+            )
 
             try:
-                title = title.upper()
+                title = typing.cast(str, title).upper()
             # Indicates the title is `None`
             except AttributeError:
                 continue
 
             try:
-                relationship = TicketRelationship[title]
+                relationship = ticket_properties.TicketRelationship[title]
             # Indicates that the relationship isn't of a known type
             except KeyError:
                 continue
@@ -261,8 +137,8 @@ class Ticket:
     def parse_markdown_document(
         document: marko.block.Document,
     ) -> tuple[
-        typing.Optional[TicketStatus],
-        typing.Optional[TicketWorkType],
+        typing.Optional[ticket_properties.TicketStatus],
+        typing.Optional[ticket_properties.TicketWorkType],
         typing.Optional[str],
         typing.Optional[str],
         dict[str, str],
@@ -278,14 +154,18 @@ class Ticket:
                 5. A map from section titles to section contents, if any
         """
 
-        children = itertools.filterfalse(
+        children: collections.abc.Iterator[
+            marko.block.BlockElement
+        ] = itertools.filterfalse(
             lambda element: isinstance(element, marko.block.BlankLine),
             document.children,
         )
         children, children_for_grouping = itertools.tee(children)
 
-        INITIAL_THROWAWAY_VALUE = "initial"
-        children_last_heading = itertools.accumulate(
+        INITIAL_THROWAWAY_VALUE = marko.block.BlockElement()
+        children_last_heading: collections.abc.Iterator[
+            marko.block.BlockElement
+        ] = itertools.accumulate(
             children_for_grouping,
             lambda previous_level, child: (
                 child if isinstance(child, marko.block.Heading) else previous_level
@@ -306,22 +186,26 @@ class Ticket:
         title = None
         work_type = None
         description = []
-        sections = {}
+        sections: dict[str, list[marko.block.BlockElement]] = {}
 
-        for child_group_last_heading, children in itertools.groupby(
+        for child_group_last_heading, children_under_heading in itertools.groupby(
             zip(children_last_heading, children),
             key=lambda level_child_tuple: level_child_tuple[0],
         ):
-            children = [child for children_last_heading, child in children]
+            child_elements = [
+                child for children_last_heading, child in children_under_heading
+            ]
 
-            head = children[0]
-            contents = children[1:]
+            head = child_elements[0]
+            contents = child_elements[1:]
 
             # Anything before the first heading is the ticket file header
             if child_group_last_heading is INITIAL_THROWAWAY_VALUE:
                 try:
                     # The first element in the header should be the ticket status
-                    status = TicketStatus[markdown.get_single_element_text(head)]
+                    status = ticket_properties.TicketStatus[
+                        markdown.get_single_element_text(head)
+                    ]
                 except (KeyError, TypeError):
                     # If it isn't, treat it as a description
                     description.append(head)
@@ -344,18 +228,21 @@ class Ticket:
         if title:
             title, work_type = Ticket.extract_title_and_work_type(title)
 
-        description = markdown.render_element_list(description)
-        sections = {
-            title: markdown.render_element_list(contents)
-            for title, contents in sections.items()
-        }
-
-        return status, work_type, title, description, sections
+        return (
+            status,
+            work_type,
+            title,
+            markdown.render_element_list(description),
+            {
+                title: markdown.render_element_list(contents)
+                for title, contents in sections.items()
+            },
+        )
 
     @staticmethod
     def extract_title_and_work_type(
         header: str,
-    ) -> tuple[typing.Optional[str], typing.Optional[TicketWorkType]]:
+    ) -> tuple[typing.Optional[str], typing.Optional[ticket_properties.TicketWorkType]]:
         """Parse a ticket file header into a title & work type member, if possible
 
         Returns:
@@ -364,7 +251,7 @@ class Ticket:
                 2. The work type, if any
         """
         try:
-            return None, TicketWorkType[header]
+            return None, ticket_properties.TicketWorkType[header]
         # Indicates that the header isn't a bare work type (because it's not
         # a member of the enum)
         except KeyError:
@@ -375,7 +262,10 @@ class Ticket:
         if match:
             # Because the regex only allows names of the work type members for
             # that match group, we can directly cast the match to a member
-            return match.group("title"), TicketWorkType[match.group("work_type")]
+            return (
+                match.group("title"),
+                ticket_properties.TicketWorkType[match.group("work_type")],
+            )
 
         # Default to interpreting the header as a title without a work type
         return header, None
@@ -449,7 +339,7 @@ class Ticket:
         )
 
     @functools.cached_property
-    def inverted_relationships(self) -> dict[int, TicketRelationship]:
+    def inverted_relationships(self) -> dict[int, ticket_properties.TicketRelationship]:
         """A map from ticket numbers to a union of all relationships this ticket has with that ticket
 
         Warning:
@@ -458,7 +348,9 @@ class Ticket:
             erroneously include any ticket numbers that were checked during
             searching
         """
-        inverted_relationships = collections.defaultdict(lambda: TicketRelationship(0))
+        inverted_relationships: dict[
+            int, ticket_properties.TicketRelationship
+        ] = collections.defaultdict(lambda: ticket_properties.TicketRelationship(0))
 
         for relationship, tickets in self.relationships.items():
             for ticket in tickets:
@@ -473,300 +365,3 @@ class Ticket:
     def related_ticket_numbers(self) -> list[int]:
         """The numbers of all tickets that this ticket is related to"""
         return sorted(set(itertools.chain.from_iterable(self.relationships.values())))
-
-
-# The individual items in ticket search inclusion & exclusion lists
-V = typing.TypeVar("V")
-
-
-# A combination of a target ticket number & a relationship with that ticket
-SpecificTicketRelationship = tuple[int, TicketRelationship]
-
-
-@dataclasses.dataclass
-class SearchConditions:
-    """A container for searching collections of tickets"""
-
-    numbers: list[int]
-    exclude_numbers: list[int]
-    groups: list[pathlib.Path]
-    exclude_groups: list[pathlib.Path]
-    statuses: list[TicketStatus]
-    exclude_statuses: list[TicketStatus]
-    work_types: list[TicketWorkType]
-    exclude_work_types: list[TicketWorkType]
-    titles: list[re.Pattern]
-    exclude_titles: list[re.Pattern]
-    descriptions: list[re.Pattern]
-    exclude_descriptions: list[re.Pattern]
-    slugs: list[re.Pattern]
-    exclude_slugs: list[re.Pattern]
-    relationships: list[SpecificTicketRelationship]
-    exclude_relationships: list[SpecificTicketRelationship]
-
-    @staticmethod
-    def match_ticket_relationship(
-        ticket: Ticket,
-    ) -> typing.Callable[[SpecificTicketRelationship], bool]:
-        """Generate a callable for testing specific relationships against this ticket"""
-
-        def ticket_relationship_predicate(
-            specific_relationship: SpecificTicketRelationship,
-        ) -> bool:
-            """Does the ticket match the specific relationship?
-
-            Note:
-                The ticket being tested is in scope via closure
-            """
-            ticket_number, relationship = specific_relationship
-
-            # The inverted relationships map defaults to the "NONE" condition,
-            # which is falsy when ANDed with anything. If a ticket being tested
-            # has one or more relationships with another target ticket, then
-            # the value will be the union of all those relationship types, which
-            # will be truthy when ANDed with any of those relationships (or the
-            # "ANY" condition, which is the union of all possible relationship
-            # types) and falsy when ANDed with a type that doesn't correspond to
-            # an existing relationship between the tested ticket and the target
-            # ticket
-            return ticket.inverted_relationships[ticket_number] & relationship
-
-        return ticket_relationship_predicate
-
-    @staticmethod
-    def matching_predicate(
-        condition: collections.abc.Callable[[V], bool],
-        include: list[V],
-        exclude: list[V],
-    ) -> bool:
-        """Distribute inclusion & exclusion conditions for ticket searching
-
-        Args;
-            condition: The condition check to apply to a test value
-            include: The values to include; the condition check must be truthy for
-                at least one (if there are any)
-            exclude: The values to exclude; the condition check must be falsy for all
-                of these
-        """
-        return (any(map(condition, include)) if include else True) and not any(
-            map(condition, exclude)
-        )
-
-    def ticket_matches(self, ticket: Ticket) -> bool:
-        """Does a ticket match the configured search criteira?"""
-        return (
-            self.matching_predicate(
-                lambda number: ticket.number == number,
-                self.numbers,
-                self.exclude_numbers,
-            )
-            and self.matching_predicate(
-                lambda group: ticket.is_in_group(group),
-                self.groups,
-                self.exclude_groups,
-            )
-            and self.matching_predicate(
-                lambda status: ticket.status is status,
-                self.statuses,
-                self.exclude_statuses,
-            )
-            and self.matching_predicate(
-                lambda work_type: ticket.work_type is work_type,
-                self.work_types,
-                self.exclude_work_types,
-            )
-            and self.matching_predicate(
-                lambda regex: regex.search(ticket.display_title),
-                self.titles,
-                self.exclude_titles,
-            )
-            and self.matching_predicate(
-                lambda regex: regex.search(ticket.description),
-                self.descriptions,
-                self.exclude_descriptions,
-            )
-            and self.matching_predicate(
-                lambda regex: regex.search(ticket.slug),
-                self.slugs,
-                self.exclude_slugs,
-            )
-            and self.matching_predicate(
-                self.match_ticket_relationship(ticket),
-                self.relationships,
-                self.exclude_relationships,
-            )
-        )
-
-
-class LazyTicketStore(dict):
-    """A map from ticket numbers to tickets
-
-    The tickets in question are only created when needed, on retrieval.
-
-    Warning:
-        Because of how `__missing__`, works, only regular key access should be
-        used to get tickets. `get` will return the default value if the ticket
-        has not been lazily loaded.
-    """
-
-    def __init__(
-        self,
-        ticket_path_components_by_number: dict[int, PathComponents],
-        tickets_dir: pathlib.Path,
-    ):
-        """
-        Args:
-            ticket_path_components_by_number: A map from ticket numbers to their
-                path component contianers
-            tickets_dir: The root directory for tickets
-        """
-        super().__init__()
-
-        self.ticket_path_components_by_number = ticket_path_components_by_number
-        self.tickets_dir = tickets_dir
-
-    def __missing__(self, key: int) -> Ticket:
-        # Attempts to get tickets for
-        path_components = self.ticket_path_components_by_number[key]
-
-        # Parse the ticket file contents
-        with open(self.tickets_dir / path_components.path) as ticket_file:
-            document = marko.parse(ticket_file.read())
-            (
-                status,
-                work_type,
-                title,
-                description,
-                sections,
-            ) = Ticket.parse_markdown_document(document)
-            raw_relationships = Ticket.extract_document_relationships(document)
-
-        # Only include relationships to tickets that actually exist
-        relationships = collections.defaultdict(dict)
-        for relationship_type, target_tickets in raw_relationships.items():
-            for target_ticket_number, relationship_label in target_tickets.items():
-                if target_ticket_number in self.ticket_path_components_by_number:
-                    relationships[relationship_type][
-                        target_ticket_number
-                    ] = relationship_label
-
-        return Ticket(
-            number=path_components.number,
-            slug=path_components.slug,
-            group=path_components.group,
-            status=status,
-            work_type=work_type,
-            title=title,
-            description=description,
-            sections=sections,
-            relationships=relationships,
-        )
-
-
-class TicketStore:
-    """A repository-specific collection of tickets
-
-    This store uses an internal `LazyTicketStore` to lazily load tickets, only
-    opening & parsing their contents when necessary.
-    """
-
-    def __init__(self, tickets_dir: typing.Optional[pathlib.Path]):
-        """
-        Args:
-            tickets_dir: A custom directory where the tickets are stored, if any
-        """
-        self._tickets_dir = tickets_dir
-
-        self.repo = git.Repo(search_parent_directories=True)
-        self.search_conditions: SearchCondtions = None
-
-        self.lazy_ticket_store = LazyTicketStore(
-            # Because this is a cached property, it's not actually accessed (so
-            # the map isn't actually created) until it's needed
-            self.ticket_path_components_by_number,
-            self.tickets_dir,
-        )
-
-    @functools.cached_property
-    def git_dir(self) -> pathlib.Path:
-        """The root of the current repo"""
-        return pathlib.Path(self.repo.working_tree_dir)
-
-    @functools.cached_property
-    def tickets_dir(self) -> pathlib.Path:
-        """The ticket storage directory in the current repo"""
-        if self._tickets_dir:
-            return self._tickets_dir
-
-        return self.git_dir / pathlib.Path(".gira")
-
-    @property
-    def _all_ticket_path_components(self) -> collections.abc.Iterator[PathComponents]:
-        """Yields all the valid ticket path component containers in the ticket dir"""
-        for ticket_path in self.tickets_dir.rglob(f"*{TICKET_FILE_SUFFIX}"):
-            try:
-                yield PathComponents.from_path(
-                    ticket_path.relative_to(self.tickets_dir)
-                )
-            # Ignore any bad ticket files
-            except MalformedTicket:
-                continue
-
-    @functools.cached_property
-    def all_ticket_path_components(self) -> list[PathComponents]:
-        """A list of all the valid ticket path component containers in the ticket dir"""
-        return list(self._all_ticket_path_components)
-
-    @functools.cached_property
-    def ticket_path_components_by_number(self) -> dict[int, PathComponents]:
-        """A map from ticket numbers to containers of path component information"""
-        return {
-            path_component.number: path_component
-            for path_component in self.all_ticket_path_components
-        }
-
-    @functools.cached_property
-    def all_ticket_numbers(self) -> set[int]:
-        """The numbers of all tickets that exist"""
-        return set(self.ticket_path_components_by_number.keys())
-
-    @property
-    def next_ticket_number(self) -> int:
-        """The number that should be used for a newly-created ticket"""
-        # Default to -1 so the result is 0 if there are no tickets
-        return max(self.all_ticket_numbers, default=-1) + 1
-
-    def get_ticket(self, number: int) -> Ticket:
-        """Retrieve a ticket by number
-
-        Args:
-            number: The number whose ticket to get
-        """
-        return self.lazy_ticket_store[number]
-
-    @property
-    def _all_tickets(self) -> collections.abc.Iterator[Ticket]:
-        """All tickets in the current repo"""
-        for ticket_number in self.all_ticket_numbers:
-            yield self.get_ticket(ticket_number)
-
-    @functools.cached_property
-    def all_tickets(self) -> list[Ticket]:
-        """All tickets in the current repo"""
-        return sorted(list(self._all_tickets), key=lambda ticket: ticket.number)
-
-    def set_search_conditions(self, search_conditions: SearchConditions) -> None:
-        """Set the conditions for ticket filtering"""
-        self.search_conditions = search_conditions
-
-    @property
-    def _filtered_tickets(self) -> collections.abc.Iterator[Ticket]:
-        """Tickets matching the set filtering conditions"""
-        for ticket in self.all_tickets:
-            if self.search_conditions and self.search_conditions.ticket_matches(ticket):
-                yield ticket
-
-    @functools.cached_property
-    def filtered_tickets(self) -> list[Ticket]:
-        """Tickets matching the set filtering conditions, if any"""
-        return sorted(list(self._filtered_tickets), key=lambda ticket: ticket.number)

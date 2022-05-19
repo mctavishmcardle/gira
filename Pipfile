@@ -16,6 +16,7 @@ gira = {editable = true, path = "."}
 isort = "*"
 mypy = "*"
 types-tabulate = "*"
+types-python-slugify = "*"
 
 [requires]
 python_version = "3.9"

@@ -1,12 +1,12 @@
 import click
 import tabulate
 
-from gira import ticket
+from gira import ticket_store
 
 
 @click.command(name="list")
 @click.pass_obj
-def list_tickets(ticket_store: ticket.TicketStore):
+def list_tickets(ticket_store: ticket_store.TicketStore):
     """List matching tickets."""
     click.echo(
         tabulate.tabulate(
@@ -50,7 +50,7 @@ def handle_page_on_single_tickets(
     help="Use a pager if there are multiple tickets?",
 )
 @click.pass_obj
-def show(ticket_store: ticket.TicketStore, pager: bool):
+def show(ticket_store: ticket_store.TicketStore, pager: bool):
     """Display matching tickets."""
     documents = (ticket.document for ticket in ticket_store.filtered_tickets)
     if pager:
@@ -87,7 +87,7 @@ check_single_found_ticket = click.option(
 @click.command()
 @check_single_found_ticket
 @click.pass_obj
-def edit(ticket_store: ticket.TicketStore):
+def edit(ticket_store: ticket_store.TicketStore):
     """Edit matching tickets."""
     for found_ticket in ticket_store.filtered_tickets:
         click.edit(filename=str(found_ticket.relative_path(ticket_store.tickets_dir)))

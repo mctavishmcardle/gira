@@ -14,7 +14,7 @@ from cli.validation import (
     ticket_work_type_choice,
     validate_ticket_relationship,
 )
-from gira import ticket
+from gira import ticket, ticket_properties, ticket_store
 
 
 def validate_new_ticket_number(
@@ -61,7 +61,7 @@ def validate_ticket_relationship_creation(
     context: click.Context,
     parameter: click.Parameter,
     value: tuple[int, str, str],
-) -> tuple[int, ticket.TicketRelationship, str]:
+) -> tuple[int, ticket_properties.TicketRelationship, str]:
     """Ensure a ticket relationship points to an actual ticket
 
     Also extract the proper relationship enum member
@@ -92,7 +92,7 @@ def validate_ticket_relationship_creation(
     "-s",
     "--status",
     type=ticket_status_choice,
-    default=ticket.TicketStatus.TODO.name,
+    default=ticket_properties.TicketStatus.TODO.name,
     show_default=True,
     callback=parse_ticket_status,
     help="The status to assign to the ticket.",
@@ -101,7 +101,7 @@ def validate_ticket_relationship_creation(
     "-w",
     "--work-type",
     type=ticket_work_type_choice,
-    default=ticket.TicketWorkType.FEATURE.name,
+    default=ticket_properties.TicketWorkType.FEATURE.name,
     show_default=True,
     callback=parse_ticket_work_type,
     help="The work_type to assign to the ticket.",
@@ -152,21 +152,21 @@ def validate_ticket_relationship_creation(
 )
 @click.pass_obj
 def new(
-    ticket_store: ticket.TicketStore,
+    ticket_store: ticket_store.TicketStore,
     title: str,
     description: str,
-    status: ticket.TicketStatus,
-    work_type: ticket.TicketWorkType,
+    status: ticket_properties.TicketStatus,
+    work_type: ticket_properties.TicketWorkType,
     group: pathlib.Path,
     slug: str,
     number: int,
-    relationships: list[tuple[int, ticket.TicketRelationship, str]],
+    relationships: list[tuple[int, ticket_properties.TicketRelationship, str]],
     edit: bool,
     echo_path: bool,
 ):
     """Create a new ticket."""
     relationship_map: dict[
-        ticket.TicketRelationship, dict[int, str]
+        ticket_properties.TicketRelationship, dict[int, str]
     ] = collections.defaultdict(dict)
     for target_ticket_number, relationship, label in relationships:
         relationship_map[relationship][target_ticket_number] = label

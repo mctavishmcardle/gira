@@ -5,7 +5,7 @@ import click
 
 from cli.new import new
 from cli.search import search
-from gira import ticket
+from gira import ticket_store
 
 
 @click.group()
@@ -20,7 +20,7 @@ from gira import ticket
 @click.pass_context
 def cli(context: click.Context, tickets_dir: typing.Optional[pathlib.Path]):
     """A barebones ticketing system for `git`"""
-    context.obj = ticket.TicketStore(tickets_dir)
+    context.obj = ticket_store.TicketStore(tickets_dir)
 
 
 cli.add_command(new)

@@ -4,7 +4,7 @@ import marko
 import marko.md_renderer
 
 
-def get_single_element_text(element: marko.element.Element) -> str:
+def get_single_element_text(element: marko.block.BlockElement) -> str:
     """Get the text from a single element
 
     Used for things like headings and paragraphs
@@ -12,7 +12,7 @@ def get_single_element_text(element: marko.element.Element) -> str:
     return element.children[0].children
 
 
-def render_element_list(elements: list[marko.element.Element]) -> str:
+def render_element_list(elements: list[marko.block.BlockElement]) -> str:
     """Render a list of elements to text"""
     with marko.md_renderer.MarkdownRenderer() as renderer:
         return "".join(renderer.render(element) for element in elements)
@@ -46,8 +46,19 @@ def parse_link_components(
 
     # Create a fake markdown link & then parse it; the resulting element instance
     # will have the proper destination & title
-    link_element = marko.inline_parser.parse(
-        f"[]({destination}{title})", [marko.inline.LinkOrEmph], fallback=None
-    )[0]
+    # Need to mess with types a bit, because `parse` is built for generic parsing
+    # of full documents
+    link_element = typing.cast(
+        typing.Type[marko.inline.Link],
+        marko.inline_parser.parse(
+            f"[]({destination}{title})",
+            # `Link`s are virtual elements which can be produced by parsing but
+            # aren't accepteed as an element type to parse on their own
+            [marko.inline.LinkOrEmph],
+            # This should fail if it can't parse a title out of what we've created,
+            # so pass in `None`, which definitely won't work, as the fallback
+            fallback=typing.cast(typing.Type[marko.inline.InlineElement], None),
+        )[0],
+    )
 
     return link_element.dest, link_element.title
