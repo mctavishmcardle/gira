@@ -30,6 +30,19 @@ class PathComponents:
     number: int
     slug: typing.Optional[str]
 
+    @classmethod
+    def is_ticket_file(cls, path: pathlib.Path) -> bool:
+        """Does the path correspond to a ticket file?
+
+        Args:
+            path: The path to check
+        """
+        try:
+            cls.from_path(path)
+            return True
+        except MalformedTicket:
+            return False
+
     @property
     def group(self) -> typing.Optional[pathlib.Path]:
         """The group that the ticket is in"""

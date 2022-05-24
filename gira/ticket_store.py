@@ -201,6 +201,80 @@ class LazyTicketStore(dict):
         )
 
 
+class RepoManager:
+    """Handles direct interaction with the `git` repo"""
+
+    def __init__(self):
+        self.repo = git.Repo(search_parent_directories=True)
+
+    @property
+    def staged_paths(self) -> list[pathlib.Path]:
+        """The paths of files that have staged modifications"""
+        return [
+            pathlib.Path(diff.b_path)
+            for diff in self.repo.index.diff(self.repo.head.commit)
+        ]
+
+    @property
+    def unstaged_paths(self) -> list[pathlib.Path]:
+        """The paths of tracked files that have unstaged modifications"""
+        return [pathlib.Path(diff.b_path) for diff in self.repo.index.diff(None)]
+
+    @property
+    def untracked_paths(self) -> list[pathlib.Path]:
+        """The paths of untracked files"""
+        return [pathlib.Path(path) for path in self.repo.untracked_files]
+
+    def get_branch(self, name: str, create: bool = True) -> typing.Optional[git.Head]:
+        """Get the branch with the input name, optionally creating one if none exist
+
+        Args:
+            name: The name of the branch
+            create: Should a branch be created if one with the input name does
+                not exist?
+
+        Returns:
+            The `Head` corresponding to the named branch, or `None` if none exists
+            and one was not created.
+        """
+        try:
+            return self.repo.branches[name]
+        # Indicates that the requested branch name doesn't exist
+        except IndexError:
+            if create:
+                return self.repo.create_head(name)
+            else:
+                return None
+
+    def branch_exists(self, branch_name: str) -> bool:
+        """Does a branch with this name exist?"""
+        return self.get_branch(branch_name, create=False) is not None
+
+    @functools.cached_property
+    def git_dir(self) -> pathlib.Path:
+        """The root of the current repo"""
+        return pathlib.Path(self.repo.working_tree_dir)
+
+    def stage(self, path: pathlib.Path):
+        """Stage any modifications to this file"""
+        self.repo.index.add(str(path))
+
+    def commit(self, message: str):
+        """Commit any staged modifications"""
+        self.repo.index.commit(message)
+
+
+class NonexistentTicket(Exception):
+    """A request was made for a ticket that doesn't exist"""
+
+    def __init__(self, number: int) -> None:
+        """
+        Args:
+            number: The ticket number that doesn't correspond to an existing ticket
+        """
+        self.number = number
+
+
 class TicketStore:
     """A repository-specific collection of tickets
 
@@ -213,9 +287,9 @@ class TicketStore:
         Args:
             tickets_dir: A custom directory where the tickets are stored, if any
         """
-        self._tickets_dir = tickets_dir
+        self.repo_manager = RepoManager()
 
-        self.repo = git.Repo(search_parent_directories=True)
+        self._tickets_dir = tickets_dir
         self.search_conditions: typing.Optional[SearchConditions] = None
 
         self.lazy_ticket_store = LazyTicketStore(
@@ -225,10 +299,34 @@ class TicketStore:
             self.tickets_dir,
         )
 
+    def stage(self, target_ticket: ticket.Ticket):
+        """Stage this ticket's file"""
+        self.repo_manager.stage(self.relative_ticket_path(target_ticket))
+
     @functools.cached_property
-    def git_dir(self) -> pathlib.Path:
-        """The root of the current repo"""
-        return pathlib.Path(typing.cast(pathlib.Path, self.repo.working_tree_dir))
+    def staged_nonticket_files(self) -> list[pathlib.Path]:
+        """Staged files that do not correspond to tickets"""
+        return [
+            path
+            for path in self.repo_manager.staged_paths
+            if not ticket_properties.PathComponents.is_ticket_file(path)
+        ]
+
+    @property
+    def _unstaged_ticket_numbers(self) -> collections.abc.Iterator[int]:
+        """The numbers of tickets which have unstaged modifications to their files"""
+        for path in (
+            self.repo_manager.unstaged_paths + self.repo_manager.untracked_paths
+        ):
+            try:
+                yield ticket_properties.PathComponents.from_path(path).number
+            except ticket_properties.MalformedTicket:
+                continue
+
+    @functools.cached_property
+    def unstaged_ticket_numbers(self) -> list[int]:
+        """The numbers of tickets which have unstaged modifications to their files"""
+        return list(self._unstaged_ticket_numbers)
 
     @functools.cached_property
     def tickets_dir(self) -> pathlib.Path:
@@ -236,7 +334,7 @@ class TicketStore:
         if self._tickets_dir:
             return self._tickets_dir
 
-        return self.git_dir / pathlib.Path(".gira")
+        return self.repo_manager.git_dir / pathlib.Path(".gira")
 
     @property
     def _all_ticket_path_components(
@@ -285,8 +383,15 @@ class TicketStore:
 
         Args:
             number: The number whose ticket to get
+
+        Raises:
+            NonexistentTicket:
+                If the number doesn't correspond to a ticket that actually exists
         """
-        return self.lazy_ticket_store[number]
+        try:
+            return self.lazy_ticket_store[number]
+        except KeyError:
+            raise NonexistentTicket(number)
 
     @property
     def _all_tickets(self) -> collections.abc.Iterator[ticket.Ticket]:
@@ -315,6 +420,26 @@ class TicketStore:
         """Tickets matching the set filtering conditions, if any"""
         return sorted(list(self._filtered_tickets), key=lambda ticket: ticket.number)
 
+    @functools.cached_property
+    def filtered_ticket_numbers(self) -> list[int]:
+        """The numbers of tickets matching the set filtering conditions, if any"""
+        return [filtered_ticket.number for filtered_ticket in self.filtered_tickets]
+
     def relative_ticket_path(self, existing_ticket: ticket.Ticket) -> pathlib.Path:
         """The path, from the current working directory, to the ticket file"""
         return pathlib.Path(os.path.relpath(self.tickets_dir / existing_ticket.path))
+
+    def write(self, modified_ticket: ticket.Ticket, stage: bool):
+        """Write the contents of a ticket to disk
+
+        Args:
+            modified_ticket: The ticket whose contents should be written out
+            stage: Should the modifications be staged?
+        """
+        with self.relative_ticket_path(modified_ticket).open(
+            mode="w"
+        ) as modified_ticket_file:
+            modified_ticket_file.write(modified_ticket.document)
+
+        if stage:
+            self.stage(modified_ticket)

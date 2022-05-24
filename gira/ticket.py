@@ -68,6 +68,24 @@ class Ticket:
         return name
 
     @property
+    def git_branch(self) -> str:
+        """The name of the git branch corresponding to this ticket
+
+        Includes the work type and slug, if they exist.
+
+        Defaults to prefixing the branch name with "ticket" if there is no work
+        type.
+        """
+        if self.work_type:
+            work_type_prefix = self.work_type.name.lower()
+        else:
+            work_type_prefix = "ticket"
+
+        work_type_prefix += "/"
+
+        return f"{work_type_prefix}{self.full_slug}"
+
+    @property
     def filename(self) -> pathlib.Path:
         """The filename for this ticket"""
         return pathlib.Path(f"{self.full_slug}{ticket_properties.TICKET_FILE_SUFFIX}")

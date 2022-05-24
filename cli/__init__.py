@@ -3,6 +3,7 @@ import typing
 
 import click
 
+from cli.git import checkout_ticket
 from cli.new import new_ticket
 from cli.search import search_tickets
 from gira import ticket_store
@@ -25,3 +26,4 @@ def cli(context: click.Context, tickets_dir: typing.Optional[pathlib.Path]):
 
 cli.add_command(new_ticket)
 cli.add_command(search_tickets)
+cli.add_command(checkout_ticket)

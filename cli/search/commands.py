@@ -3,8 +3,26 @@ import typing
 import click
 import tabulate
 
-from cli import new, validation
+from cli import git, new, validation
 from gira import ticket, ticket_properties, ticket_store
+
+
+def error_on_empty_target_list(
+    context: click.Context, parameter: click.Parameter, value: bool
+) -> None:
+    """Error out if requested and no tickets were found"""
+    if value and not context.obj.filtered_tickets:
+        raise click.BadParameter(f"No tickets matched the search criteria.")
+
+
+error_none_found = click.option(
+    "--error-none-found/--no-error-none_found",
+    default=True,
+    show_default=True,
+    expose_value=False,
+    callback=error_on_empty_target_list,
+    help="Fail if no tickets matched.",
+)
 
 
 @click.command(name="list")
@@ -15,19 +33,36 @@ def list_tickets(store: ticket_store.TicketStore):
         tabulate.tabulate(
             (
                 (
-                    ticket.status.name if ticket.status else ticket.status,
-                    ticket.work_type.name if ticket.work_type else ticket.work_type,
-                    ticket.number,
-                    ticket.title,
-                    ticket.group,
+                    found_ticket.status.name
+                    if found_ticket.status
+                    else found_ticket.status,
+                    found_ticket.work_type.name
+                    if found_ticket.work_type
+                    else found_ticket.work_type,
+                    found_ticket.number,
+                    found_ticket.title,
+                    found_ticket.group,
                     # `None` results in a blank for empty related ticket lists
-                    ticket.related_ticket_numbers or None,
+                    found_ticket.related_ticket_numbers or None,
+                    # `None` results in a blank for nonexistent branches
+                    found_ticket.git_branch
+                    if store.repo_manager.branch_exists(found_ticket.git_branch)
+                    else None,
                 )
-                for ticket in store.filtered_tickets
+                for found_ticket in store.filtered_tickets
             ),
             tablefmt="plain",
         )
     )
+
+
+@click.command()
+@click.pass_obj
+@error_none_found
+def stage(store: ticket_store.TicketStore):
+    """Stage any changes to matching tickets."""
+    for found_ticket in store.filtered_tickets:
+        store.stage(found_ticket)
 
 
 def handle_page_on_single_tickets(
@@ -50,7 +85,7 @@ def handle_page_on_single_tickets(
     "--pager/--no-pager",
     default=True,
     callback=handle_page_on_single_tickets,
-    help="Use a pager if there are multiple tickets?",
+    help="Use a pager if there are multiple tickets.",
 )
 @click.pass_obj
 def show(store: ticket_store.TicketStore, pager: bool):
@@ -86,18 +121,49 @@ check_single_found_ticket = click.option(
     help="Fail if the search turns up more than one ticket.",
 )
 
+commit_modifications_options = git.ticket_commit_options(
+    commit_help="Commit any modifications.", stage_help="Stage any modifications."
+)
+
+
+def commit_modifications(store: ticket_store.TicketStore) -> None:
+    """Commit changes to filtered tickets
+
+    The commit message will include all filtered ticket numbers
+
+    Args:
+        store: The ticket store
+    """
+    if len(store.filtered_tickets) == 1:
+        ticket_word = "ticket"
+    else:
+        ticket_word = "tickets"
+
+    store.repo_manager.commit(
+        f"Modified {ticket_word} {git.format_ticket_numbers(store.filtered_ticket_numbers)}."
+    )
+
 
 @click.command()
 @check_single_found_ticket
+@error_none_found
+@commit_modifications_options
 @click.pass_obj
-def edit(store: ticket_store.TicketStore):
+def edit(store: ticket_store.TicketStore, stage: bool, commit: bool):
     """Open matching tickets in an editor."""
     for found_ticket in store.filtered_tickets:
         click.edit(filename=str(store.relative_ticket_path(found_ticket)))
 
+        if stage:
+            store.stage(found_ticket)
+
+    if commit:
+        commit_modifications(store)
+
 
 @click.command(name="set")
 @check_single_found_ticket
+@error_none_found
 @click.option(
     "-d",
     "--description",
@@ -120,12 +186,15 @@ def edit(store: ticket_store.TicketStore):
     callback=validation.parse_ticket_work_type,
     help="The work type to assign to the ticket.",
 )
+@commit_modifications_options
 @click.pass_obj
 def set_properties(
     store: ticket_store.TicketStore,
     description: typing.Optional[str],
     status: typing.Optional[ticket_properties.TicketStatus],
     work_type: typing.Optional[ticket_properties.TicketWorkType],
+    stage: bool,
+    commit: bool,
 ):
     """Set fields of matching tickets to new values.
 
@@ -142,24 +211,31 @@ def set_properties(
         if work_type:
             found_ticket.work_type = work_type
 
-        with store.relative_ticket_path(found_ticket).open(
-            mode="w"
-        ) as found_ticket_file:
-            found_ticket_file.write(found_ticket.document)
+        store.write(found_ticket, stage)
+
+    if commit:
+        commit_modifications(store)
 
 
 @click.command()
 @check_single_found_ticket
+@error_none_found
 @new.new_ticket_relationships
+@commit_modifications_options
 @click.pass_obj
-def add(store: ticket_store.TicketStore, relationships: ticket.RelationshipMap):
+def add(
+    store: ticket_store.TicketStore,
+    relationships: ticket.RelationshipMap,
+    stage: bool,
+    commit: bool,
+):
     """Add new field elements to matching tickets."""
     for found_ticket in store.filtered_tickets:
         for relationship, tickets_to_labels in relationships.items():
             for ticket_number, label in tickets_to_labels.items():
                 found_ticket.relationships[relationship][ticket_number] = label
 
-        with store.relative_ticket_path(found_ticket).open(
-            mode="w"
-        ) as found_ticket_file:
-            found_ticket_file.write(found_ticket.document)
+        store.write(found_ticket, stage)
+
+    if commit:
+        commit_modifications(store)

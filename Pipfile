@@ -17,6 +17,7 @@ isort = "*"
 mypy = "*"
 types-tabulate = "*"
 types-python-slugify = "*"
+types-setuptools = "*"
 
 [requires]
 python_version = "3.9"

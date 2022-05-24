@@ -5,6 +5,7 @@ import typing
 import click
 
 from cli.callbacks import compose_callbacks, mapped_callback, plain_callback
+from cli.git import ticket_commit_options
 from cli.validation import (
     add_terminal_newline_to_description,
     parse_ticket_status,
@@ -107,14 +108,18 @@ new_ticket_relationships = click.option(
     "--edit/--no-edit",
     default=False,
     show_default=True,
-    help="Edit the ticket file after creation?",
+    help="Edit the ticket file after creation.",
 )
 @click.option(
     "-p/-P",
     "--echo-path/--no-echo-path",
     default=False,
     show_default=True,
-    help="Echo the path to the newly-created ticket?",
+    help="Echo the path to the newly-created ticket.",
+)
+@ticket_commit_options(
+    commit_help="Commit the new ticket file to the current branch.",
+    stage_help="Stage the the new ticket file.",
 )
 @click.pass_obj
 def new_ticket(
@@ -129,6 +134,8 @@ def new_ticket(
     relationships: ticket.RelationshipMap,
     edit: bool,
     echo_path: bool,
+    stage: bool,
+    commit: bool,
 ):
     """Create a new ticket."""
 
@@ -159,3 +166,12 @@ def new_ticket(
     # Optionally open the file
     if edit:
         click.edit(filename=str(relative_ticket_path))
+
+    # Optionally stage the file
+    # (automatically set to `True` if we're committing)
+    if stage:
+        store.stage(new_ticket)
+
+    # Optionally commit the file
+    if commit:
+        store.repo_manager.commit(f"Created ticket #{new_ticket.number}.")
