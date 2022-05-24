@@ -1,4 +1,4 @@
-TODO
+DONE
 
 # TASK: Update to v1.0
 
